@@ -84,7 +84,7 @@ async fn ack_back(user: Arc<User>, ack: Arc<Mutex<HashSet<u64>>>) -> Result<(), 
         None
     }
     
-    let html = user.client.get("https://chat.stackexchange.com/rooms/1").send().await?.error_for_status()?.text().await?;
+    let html = user.client.get("https://chat.stackexchange.com/rooms/240").send().await?.error_for_status()?.text().await?;
     let dom = Dom::parse(&html)?;
     let script = find_script(&dom).await.ok_or(MissingAckBack {})?;
     
@@ -115,7 +115,9 @@ fn urls_from_dom(dom: &Dom) -> Vec<Url> {
         match node {
             Node::Element(element) => {
                 if element.name == "a" && element.attributes.contains_key("href") {
-                    urls.push(Url::parse("https://chat.stackexchange.com/rooms/1/sandbox").unwrap().join(element.attributes.get("href").unwrap().as_ref().unwrap()).unwrap());
+                    if let Ok(url) = Url::parse("https://chat.stackexchange.com/rooms/240/sandbox").unwrap().join(element.attributes.get("href").unwrap().as_ref().unwrap()) {
+                        urls.push(url);
+                    }
                 } else {
                     for child in &element.children {
                         search_node(&child, urls);
@@ -160,7 +162,7 @@ fn url_ids(urls: &Vec<Url>, site: &str) -> HashSet<String> {
     ids
 }
 
-async fn find_known_ids(events: &Vec<Event>, ids: Arc<Mutex<Ids>>) {
+async fn known_ids(events: &Vec<Event>, ids: Arc<Mutex<Ids>>) {
     for event in events {
         if event.event_type == 1 && event.content.is_some() {
             let dom = Dom::parse(&event.content.as_ref().unwrap()).unwrap();
@@ -178,20 +180,33 @@ async fn find_known_ids(events: &Vec<Event>, ids: Arc<Mutex<Ids>>) {
     }
 }
 
-async fn connect_chat_ws(log_id: &str, user: Arc<User>, ids: Arc<Mutex<Ids>>, ack: Arc<Mutex<HashSet<u64>>>, kill_offset: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ws_auth: WsAuth = serde_json::from_str(&(user.client.post("https://chat.stackexchange.com/ws-auth").form(&[
-        ("roomid", "1"),
-        ("fkey", &user.fkey)
-    ]).send().await?.error_for_status()?.text().await?))?;
-    
-    let events: Events = serde_json::from_str(&(user.client.post("https://chat.stackexchange.com/chats/1/events").form(&[
+pub async fn find_known_ids(user: Arc<User>, ids: Arc<Mutex<Ids>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let events: Events = serde_json::from_str(&(user.client.post("https://chat.stackexchange.com/chats/240/events").form(&[
         ("since", "0"),
         ("mode", "Messages"),
         ("msgCount", "100"),
         ("fkey", &user.fkey)
     ]).send().await?.error_for_status()?.text().await?))?;
     
-    find_known_ids(&events.events, Arc::clone(&ids)).await;
+    known_ids(&events.events, Arc::clone(&ids)).await;
+    
+    Ok(())
+}
+
+async fn connect_chat_ws(log_id: &str, user: Arc<User>, ids: Arc<Mutex<Ids>>, ack: Arc<Mutex<HashSet<u64>>>, kill_offset: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let ws_auth: WsAuth = serde_json::from_str(&(user.client.post("https://chat.stackexchange.com/ws-auth").form(&[
+        ("roomid", "240"),
+        ("fkey", &user.fkey)
+    ]).send().await?.error_for_status()?.text().await?))?;
+    
+    let events: Events = serde_json::from_str(&(user.client.post("https://chat.stackexchange.com/chats/240/events").form(&[
+        ("since", "0"),
+        ("mode", "Messages"),
+        ("msgCount", "100"),
+        ("fkey", &user.fkey)
+    ]).send().await?.error_for_status()?.text().await?))?;
+    
+    known_ids(&events.events, Arc::clone(&ids)).await;
     
     let ws_auth_uri = format!("{}?l={}", ws_auth.url, events.time).parse::<Uri>()?;
     

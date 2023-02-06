@@ -129,7 +129,7 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
                                 if ids.lock().await.p_200.insert(question.id.clone()) {
                                     let wait_ms = wait_for_api(&question.id, false, "codegolf", Arc::clone(&user_main), Arc::clone(&config)).await;
                                     
-                                    post(1, format!("https://codegolf.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
+                                    post(240, format!("https://codegolf.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
                                     
                                     println!("watch_{}: did post in {}ms", id, wait_ms);
                                 }
@@ -142,7 +142,7 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
                                 if ids.lock().await.p_202.insert(question.id.clone()) {
                                     let wait_ms = wait_for_api(&question.id, false, "codegolf.meta", Arc::clone(&user_main), Arc::clone(&config)).await;
                                     
-                                    post(1, format!("https://codegolf.meta.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
+                                    post(240, format!("https://codegolf.meta.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
                                     
                                     println!("watch_{}: did post in {}ms", id, wait_ms);
                                 }
@@ -159,7 +159,7 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
                                         if ids.lock().await.p_202.insert(answer.answerid.to_string()) {
                                             let wait_ms = wait_for_api(&answer.answerid.to_string(), true, "codegolf.meta", Arc::clone(&user_sandbox), Arc::clone(&config)).await;
                                             
-                                            post(1, format!("https://codegolf.meta.stackexchange.com/a/{}", answer.answerid), Arc::clone(&user_sandbox)).await;
+                                            post(240, format!("https://codegolf.meta.stackexchange.com/a/{}", answer.answerid), Arc::clone(&user_sandbox)).await;
 
                                             println!("watch_{}: did post in {}ms", id, wait_ms);
                                         }
@@ -224,7 +224,7 @@ async fn post_from_api(down_since: u128, ids: Arc<Mutex<Ids>>, user_main: Arc<Us
             println!("api: qs_200: {}", q.question_id);
             
             if ids.lock().await.p_200.insert(q.question_id.to_string()) {
-                post(1, format!("https://codegolf.stackexchange.com/q/{}", q.question_id), Arc::clone(&user_main)).await;
+                post(240, format!("https://codegolf.stackexchange.com/q/{}", q.question_id), Arc::clone(&user_main)).await;
             }
         }
     }
@@ -234,7 +234,7 @@ async fn post_from_api(down_since: u128, ids: Arc<Mutex<Ids>>, user_main: Arc<Us
             println!("api: qs_202: {}", q.question_id);
             
             if ids.lock().await.p_202.insert(q.question_id.to_string()) {
-                post(1, format!("https://codegolf.meta.stackexchange.com/q/{}", q.question_id), Arc::clone(&user_main)).await;
+                post(240, format!("https://codegolf.meta.stackexchange.com/q/{}", q.question_id), Arc::clone(&user_main)).await;
             }
         }
     }
@@ -244,7 +244,7 @@ async fn post_from_api(down_since: u128, ids: Arc<Mutex<Ids>>, user_main: Arc<Us
             println!("api: as_sandbox: {}", a.answer_id);
             
             if ids.lock().await.p_202.insert(a.answer_id.to_string()) {
-                post(1, format!("https://codegolf.meta.stackexchange.com/a/{}", a.answer_id), Arc::clone(&user_sandbox)).await;
+                post(240, format!("https://codegolf.meta.stackexchange.com/a/{}", a.answer_id), Arc::clone(&user_sandbox)).await;
             }
         }
     }

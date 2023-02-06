@@ -46,6 +46,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         p_202: HashSet::new()
     }));
     
+    chat::find_known_ids(Arc::clone(&main_arc), Arc::clone(&ids)).await?;
+    
     let watch_0 = tokio::spawn(watch::watch_ws(0, Arc::clone(&ids), [Arc::clone(&main_arc), Arc::clone(&sandbox_arc)], Arc::clone(&config_arc)));
     let watch_1 = tokio::spawn(watch::watch_ws(1, Arc::clone(&ids), [Arc::clone(&main_arc), Arc::clone(&sandbox_arc)], Arc::clone(&config_arc)));
     

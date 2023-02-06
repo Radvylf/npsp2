@@ -130,7 +130,7 @@ fn extract_user_id(html: &str) -> Result<String, Box<dyn std::error::Error + Sen
 }
 
 async fn try_login(client: &reqwest::Client, email: &str, password: &str) -> Result<UserCredentials, Box<dyn std::error::Error + Send + Sync>> {
-    let fkey = extract_fkey(&client.get("https://openid.stackexchange.com/account/login").send().await?.error_for_status()?.text().await?)?;
+    let fkey = extract_fkey(&client.get("https://codegolf.stackexchange.com/users/login").send().await?.error_for_status()?.text().await?)?;
     
     let is_login_ok = client.post("https://codegolf.stackexchange.com/users/login-or-signup/validation/track").form(&[
         ("email", email),
