@@ -11,7 +11,7 @@ use std::collections::{HashSet, HashMap};
 use futures::StreamExt;
 use tokio_tungstenite::tungstenite::{self, protocol::Message};
 
-use crate::{time, Ids, login::User};
+use crate::{time, Site, Ids, login::User};
 
 #[derive(Deserialize)]
 struct WsAuth {
@@ -47,7 +47,7 @@ impl fmt::Display for MissingAckBack {
     }
 }
 
-async fn ack_back(user: Arc<User>, ack: Arc<Mutex<HashSet<u64>>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn ack_back(room_id: u64, user: Arc<User>, ack: Arc<Mutex<HashSet<u64>>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     async fn find_script(dom: &Dom) -> Option<String> {
         fn search_node(node: &Node) -> Option<String> {
             match node {
@@ -84,7 +84,7 @@ async fn ack_back(user: Arc<User>, ack: Arc<Mutex<HashSet<u64>>>) -> Result<(), 
         None
     }
     
-    let html = user.client.get("https://chat.stackexchange.com/rooms/240").send().await?.error_for_status()?.text().await?;
+    let html = user.client.get(format!("https://chat.stackexchange.com/rooms/{}", room_id)).send().await?.error_for_status()?.text().await?;
     let dom = Dom::parse(&html)?;
     let script = find_script(&dom).await.ok_or(MissingAckBack {})?;
     
@@ -115,7 +115,8 @@ fn urls_from_dom(dom: &Dom) -> Vec<Url> {
         match node {
             Node::Element(element) => {
                 if element.name == "a" && element.attributes.contains_key("href") {
-                    if let Ok(url) = Url::parse("https://chat.stackexchange.com/rooms/240/sandbox").unwrap().join(element.attributes.get("href").unwrap().as_ref().unwrap()) {
+                    // Assume we are in sandbox; since all URLs we're interested are on a separate domain, this doesn't matter
+                    if let Ok(url) = Url::parse("https://chat.stackexchange.com/rooms/1/sandbox").unwrap().join(element.attributes.get("href").unwrap().as_ref().unwrap()) {
                         urls.push(url);
                     }
                 } else {
@@ -162,51 +163,65 @@ fn url_ids(urls: &Vec<Url>, site: &str) -> HashSet<String> {
     ids
 }
 
-async fn known_ids(events: &Vec<Event>, ids: Arc<Mutex<Ids>>) {
+async fn known_ids(site: &Site, events: &Vec<Event>, ids: Arc<Mutex<Ids>>) {
     for event in events {
         if event.event_type == 1 && event.content.is_some() {
             let dom = Dom::parse(&event.content.as_ref().unwrap()).unwrap();
             
             let urls = urls_from_dom(&dom);
             
-            for id in url_ids(&urls, "codegolf.stackexchange.com") {
-                ids.lock().await.p_200.insert(id);
-            }
-            
-            for id in url_ids(&urls, "codegolf.meta.stackexchange.com") {
-                ids.lock().await.p_202.insert(id);
+            match site {
+                Site::CodeGolf => {
+                    for id in url_ids(&urls, "codegolf.stackexchange.com") {
+                        ids.lock().await.p_200.insert(id);
+                    }
+
+                    for id in url_ids(&urls, "codegolf.meta.stackexchange.com") {
+                        ids.lock().await.p_202.insert(id);
+                    }
+                }
+                // PLDI
+                Site::PLDI => {
+                    for id in url_ids(&urls, "languagedesign.stackexchange.com") {
+                        ids.lock().await.p_716.insert(id);
+                    }
+
+                    for id in url_ids(&urls, "languagedesign.meta.stackexchange.com") {
+                        ids.lock().await.p_717.insert(id);
+                    }
+                }
             }
         }
     }
 }
 
-pub async fn find_known_ids(user: Arc<User>, ids: Arc<Mutex<Ids>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let events: Events = serde_json::from_str(&(user.client.post("https://chat.stackexchange.com/chats/240/events").form(&[
+pub async fn find_known_ids(room_id: u64, site: &Site, user: Arc<User>, ids: Arc<Mutex<Ids>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let events: Events = serde_json::from_str(&(user.client.post(format!("https://chat.stackexchange.com/chats/{}/events", room_id)).form(&[
         ("since", "0"),
         ("mode", "Messages"),
         ("msgCount", "100"),
         ("fkey", &user.fkey)
     ]).send().await?.error_for_status()?.text().await?))?;
     
-    known_ids(&events.events, Arc::clone(&ids)).await;
+    known_ids(site, &events.events, Arc::clone(&ids)).await;
     
     Ok(())
 }
 
-async fn connect_chat_ws(log_id: &str, user: Arc<User>, ids: Arc<Mutex<Ids>>, ack: Arc<Mutex<HashSet<u64>>>, kill_offset: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn connect_chat_ws(room_id: u64, site: &Site, log_id: &str, user: Arc<User>, ids: Arc<Mutex<Ids>>, ack: Arc<Mutex<HashSet<u64>>>, kill_offset: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_auth: WsAuth = serde_json::from_str(&(user.client.post("https://chat.stackexchange.com/ws-auth").form(&[
-        ("roomid", "240"),
+        ("roomid", &room_id.to_string()),
         ("fkey", &user.fkey)
     ]).send().await?.error_for_status()?.text().await?))?;
     
-    let events: Events = serde_json::from_str(&(user.client.post("https://chat.stackexchange.com/chats/240/events").form(&[
+    let events: Events = serde_json::from_str(&(user.client.post(format!("https://chat.stackexchange.com/chats/{}/events", room_id)).form(&[
         ("since", "0"),
         ("mode", "Messages"),
         ("msgCount", "100"),
         ("fkey", &user.fkey)
     ]).send().await?.error_for_status()?.text().await?))?;
     
-    known_ids(&events.events, Arc::clone(&ids)).await;
+    known_ids(site, &events.events, Arc::clone(&ids)).await;
     
     let ws_auth_uri = format!("{}?l={}", ws_auth.url, events.time).parse::<Uri>()?;
     
@@ -223,7 +238,7 @@ async fn connect_chat_ws(log_id: &str, user: Arc<User>, ids: Arc<Mutex<Ids>>, ac
     
     let mut ws_stream = tokio_tungstenite::connect_async(request).await?.0;
     
-    println!("{}: open", log_id);
+    println!("{}-{}: open", log_id, room_id);
     
     let duration = tokio::time::sleep(if kill_offset {
         Duration::from_millis(3600000)
@@ -275,7 +290,7 @@ async fn connect_chat_ws(log_id: &str, user: Arc<User>, ids: Arc<Mutex<Ids>>, ac
                                                     ("fkey", &user.fkey)
                                                 ]).send().await.unwrap().error_for_status().unwrap();
                                                 
-                                                println!("{}: ack {}", log_id, event.message_id.unwrap());
+                                                println!("{}-{}: ack {}", log_id, room_id, event.message_id.unwrap());
                                             }
                                         }
                                         _ => ()
@@ -292,17 +307,17 @@ async fn connect_chat_ws(log_id: &str, user: Arc<User>, ids: Arc<Mutex<Ids>>, ac
     
     tokio::select!(
         _ = duration => {
-            println!("{}: close (alive over {} hours)", log_id, if kill_offset { 1 } else { 2 });
+            println!("{}-{}: close (alive over {} hours)", log_id, room_id, if kill_offset { 1 } else { 2 });
             
             chat.abort();
         }
         _ = pong => {
-            println!("{}: close (ping too high - {}s - or disconn)", log_id, (time() - *ping.lock().await) / 1000);
+            println!("{}-{}: close (ping too high - {}s - or disconn)", log_id, room_id, (time() - *ping.lock().await) / 1000);
             
             chat.abort();
         }
         chat_r = &mut chat => {
-            println!("{}: close (stream closed)", log_id);
+            println!("{}-{}: close (stream closed)", log_id, room_id);
             
             chat_r.unwrap();
         }
@@ -311,15 +326,15 @@ async fn connect_chat_ws(log_id: &str, user: Arc<User>, ids: Arc<Mutex<Ids>>, ac
     Ok(())
 }
 
-pub async fn chat_ws(log_id: &str, user: Arc<User>, ids: Arc<Mutex<Ids>>) {
+pub async fn chat_ws(room_id: u64, site: &Site, log_id: &str, user: Arc<User>, ids: Arc<Mutex<Ids>>) {
     let ack: Arc<Mutex<HashSet<u64>>> = Arc::new(Mutex::new(HashSet::new()));
     
     let mut first = true;
     
     loop {
-        ack_back(Arc::clone(&user), Arc::clone(&ack)).await.unwrap();
+        ack_back(room_id, Arc::clone(&user), Arc::clone(&ack)).await.unwrap();
         
-        connect_chat_ws(log_id, Arc::clone(&user), Arc::clone(&ids), Arc::clone(&ack), log_id == "sandbox" && first).await.unwrap();
+        connect_chat_ws(room_id, site, log_id, Arc::clone(&user), Arc::clone(&ids), Arc::clone(&ack), log_id == "sandbox" && first).await.unwrap();
         
         first = false;
 

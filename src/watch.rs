@@ -101,6 +101,11 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
     ws_stream.send(Message::Text("202-questions-newest".to_owned())).await?;
     ws_stream.send(Message::Text("202-question-2140".to_owned())).await?;
     
+    // PLDI
+    
+    ws_stream.send(Message::Text("716-questions-newest".to_owned())).await?;
+    ws_stream.send(Message::Text("717-questions-newest".to_owned())).await?;
+    
     println!("watch_{}: open", id);
     
     let duration = tokio::time::sleep(if kill_offset {
@@ -167,6 +172,33 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
                                     _ => ()
                                 }
                             }
+                            // PLDI
+                            "716-questions-newest" => {
+                                let question: Question = serde_json::from_str(&data.data).unwrap();
+
+                                println!("watch_{}: 716-questions-newest: {}", id, question.id);
+                                
+                                if ids.lock().await.p_716.insert(question.id.clone()) {
+                                    let wait_ms = wait_for_api(&question.id, false, "languagedesign", Arc::clone(&user_main), Arc::clone(&config)).await;
+                                    
+                                    post(146046, format!("https://languagedesign.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
+                                    
+                                    println!("watch_{}: did post in {}ms", id, wait_ms);
+                                }
+                            }
+                            "717-questions-newest" => {
+                                let question: Question = serde_json::from_str(&data.data).unwrap();
+
+                                println!("watch_{}: 717-questions-newest: {}", id, question.id);
+
+                                if ids.lock().await.p_717.insert(question.id.clone()) {
+                                    let wait_ms = wait_for_api(&question.id, false, "languagedesign.meta", Arc::clone(&user_main), Arc::clone(&config)).await;
+                                    
+                                    post(146046, format!("https://languagedesign.meta.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
+                                    
+                                    println!("watch_{}: did post in {}ms", id, wait_ms);
+                                }
+                            }
                             _ => panic!("Unknown data.action: {}", data.action)
                         }
                     }
@@ -218,6 +250,9 @@ async fn post_from_api(down_since: u128, ids: Arc<Mutex<Ids>>, user_main: Arc<Us
     let qs_200: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=codegolf&filter=!bBWABX77YE7)Qj&key={}", config.key)).send().await?.error_for_status()?.text().await?))?;
     let qs_202: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=codegolf.meta&filter=!bBWABX77YE7)Qj&key={}", config.key)).send().await?.error_for_status()?.text().await?))?;
     let as_sandbox: APIAnswers = serde_json::from_str(&(user_sandbox.client.get(format!("https://api.stackexchange.com/2.3/questions/2140/answers?pagesize=12&order=desc&sort=creation&site=codegolf.meta&filter=!-)QWsc3sXhrz&key={}", config.key)).send().await?.error_for_status()?.text().await?))?;
+    // PLDI
+    let qs_716: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=languagedesign&filter=!bBWABX77YE7)Qj&key={}", config.key)).send().await?.error_for_status()?.text().await?))?;
+    let qs_717: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=languagedesign.meta&filter=!bBWABX77YE7)Qj&key={}", config.key)).send().await?.error_for_status()?.text().await?))?;
     
     for q in qs_200.items {
         if q.creation_date * 1000 > down_since - 20000 {
@@ -245,6 +280,28 @@ async fn post_from_api(down_since: u128, ids: Arc<Mutex<Ids>>, user_main: Arc<Us
             
             if ids.lock().await.p_202.insert(a.answer_id.to_string()) {
                 post(240, format!("https://codegolf.meta.stackexchange.com/a/{}", a.answer_id), Arc::clone(&user_sandbox)).await;
+            }
+        }
+    }
+    
+    // PLDI
+    
+    for q in qs_716.items {
+        if q.creation_date * 1000 > down_since - 20000 {
+            println!("api: qs_716: {}", q.question_id);
+            
+            if ids.lock().await.p_716.insert(q.question_id.to_string()) {
+                post(146046, format!("https://languagedesign.stackexchange.com/q/{}", q.question_id), Arc::clone(&user_main)).await;
+            }
+        }
+    }
+    
+    for q in qs_717.items {
+        if q.creation_date * 1000 > down_since - 20000 {
+            println!("api: qs_717: {}", q.question_id);
+            
+            if ids.lock().await.p_717.insert(q.question_id.to_string()) {
+                post(146046, format!("https://languagedesign.meta.stackexchange.com/q/{}", q.question_id), Arc::clone(&user_main)).await;
             }
         }
     }
