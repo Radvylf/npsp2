@@ -41,30 +41,72 @@ async fn post(room_id: u64, text: String, user: Arc<User>) {
 }
 
 #[derive(Deserialize)]
-struct APIAnything {
+struct APIWrapperWithItems {
     items: Vec<serde_json::Value>
 }
 
-async fn wait_for_api(id: &str, is_answer: bool, site: &str, user: Arc<User>, config: Arc<Config>) -> u128 {
+#[derive(Deserialize)]
+struct APIQuestions {
+    items: Vec<APIQuestion>
+}
+
+#[derive(Deserialize)]
+struct APIQuestion {
+    creation_date: u128,
+    question_id: u64,
+    owner: Option<APIShallowUser>
+}
+
+#[derive(Deserialize, Clone, Copy)]
+struct APIShallowUser {
+    reputation: u64
+}
+
+#[derive(Deserialize)]
+struct APIAnswers {
+    items: Vec<APIAnswer>
+}
+
+#[derive(Deserialize)]
+struct APIAnswer {
+    creation_date: u128,
+    answer_id: u64
+}
+
+async fn wait_for_api(id: &str, is_answer: bool, site: &str, user: Arc<User>, config: Arc<Config>) -> u64 {
     let start = time();
     
-    async fn is_on_api(id: &str, is_answer: bool, site: &str, user: Arc<User>, config: Arc<Config>) -> bool {
-        let response: APIAnything = serde_json::from_str(&(user.client.get(format!("https://api.stackexchange.com/2.3/{}/{}?site={}&key={}", if is_answer { "answers" } else { "questions" }, id, site, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
-        
-        !response.items.is_empty()
+    async fn is_on_api(id: &str, is_answer: bool, site: &str, user: Arc<User>, config: Arc<Config>) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        let response_text = user.client.get(format!("https://api.stackexchange.com/2.3/{}/{}?site={}&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", if is_answer { "answers" } else { "questions" }, id, site, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap();
+
+        if !is_answer {
+            let response: APIQuestions = serde_json::from_str(&response_text).unwrap();
+
+            Ok(response.items.get(0).unwrap().owner.unwrap().reputation)
+        } else {
+            let response: APIWrapperWithItems = serde_json::from_str(&response_text).unwrap();
+
+            response.items.get(0).unwrap();
+
+            Ok(0)
+        }
     }
     
     for _ in 0..4 {
-        if is_on_api(id, is_answer, site, Arc::clone(&user), Arc::clone(&config)).await {
-            return time() - start;
+        if let Ok(rep) = is_on_api(id, is_answer, site, Arc::clone(&user), Arc::clone(&config)).await {
+            println!("wait_for_api took {}ms", time() - start);
+
+            return rep;
         }
         
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     
     for _ in 0..4 {
-        if is_on_api(id, is_answer, site, Arc::clone(&user), Arc::clone(&config)).await {
-            return time() - start;
+        if let Ok(rep) = is_on_api(id, is_answer, site, Arc::clone(&user), Arc::clone(&config)).await {
+            println!("wait_for_api took {}ms", time() - start);
+
+            return rep;
         }
         
         tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -125,81 +167,151 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
                     if data.action == "hb" {
                         ws_stream.send(Message::Text("pong".to_owned())).await.unwrap();
                     } else {
-                        match data.action.as_str() {
-                            "200-questions-newest" => {
-                                let question: Question = serde_json::from_str(&data.data).unwrap();
+                        {
+                            let ids_clone = Arc::clone(&ids);
+                            let user_main_clone = Arc::clone(&user_main);
+                            let user_sandbox_clone = Arc::clone(&user_sandbox);
+                            let config_clone = Arc::clone(&config);
 
-                                println!("watch_{}: 200-questions-newest: {}", id, question.id);
-                                
-                                if ids.lock().await.p_200.insert(question.id.clone()) {
-                                    let wait_ms = wait_for_api(&question.id, false, "codegolf", Arc::clone(&user_main), Arc::clone(&config)).await;
-                                    
-                                    post(240, format!("https://codegolf.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
-                                    
-                                    println!("watch_{}: did post in {}ms", id, wait_ms);
-                                }
-                            }
-                            "202-questions-newest" => {
-                                let question: Question = serde_json::from_str(&data.data).unwrap();
+                            tokio::spawn(async move {
+                                let ids = ids_clone;
+                                let user_main = user_main_clone;
+                                let user_sandbox = user_sandbox_clone;
+                                let config = config_clone;
 
-                                println!("watch_{}: 202-questions-newest: {}", id, question.id);
-
-                                if ids.lock().await.p_202.insert(question.id.clone()) {
-                                    let wait_ms = wait_for_api(&question.id, false, "codegolf.meta", Arc::clone(&user_main), Arc::clone(&config)).await;
-                                    
-                                    post(240, format!("https://codegolf.meta.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
-                                    
-                                    println!("watch_{}: did post in {}ms", id, wait_ms);
-                                }
-                            }
-                            "202-question-2140" => {
-                                let update: Update = serde_json::from_str(&data.data).unwrap();
-
-                                match update.a.as_str() {
-                                    "answer-add" => {
-                                        let answer: AnswerAdd = serde_json::from_str(&data.data).unwrap();
-
-                                        println!("watch_{}: 202-question-2104 answer-add: {}", id, answer.answerid);
-
-                                        if ids.lock().await.p_202.insert(answer.answerid.to_string()) {
-                                            let wait_ms = wait_for_api(&answer.answerid.to_string(), true, "codegolf.meta", Arc::clone(&user_sandbox), Arc::clone(&config)).await;
+                                match data.action.as_str() {
+                                    "200-questions-newest" => {
+                                        let question: Question = serde_json::from_str(&data.data).unwrap();
+        
+                                        println!("watch_{}: 200-questions-newest: {}", id, question.id);
+                                        
+                                        if ids.lock().await.p_200.insert(question.id.clone()) {
+                                            let rep = wait_for_api(&question.id, false, "codegolf", Arc::clone(&user_main), Arc::clone(&config)).await;
                                             
-                                            post(240, format!("https://codegolf.meta.stackexchange.com/a/{}", answer.answerid), Arc::clone(&user_sandbox)).await;
+                                            if rep < 10 {
+                                                println!("watch_{}: question {}: User rep is {} (<10), delaying...", id, question.id, rep);
+    
+                                                tokio::time::sleep(Duration::from_millis(5 * 60 * 1000)).await;
+    
+                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=codegolf&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
+    
+                                                if response.items.is_empty() {
+                                                    println!("watch_{}: question {}: seems to be deleted now", id, question.id);
 
-                                            println!("watch_{}: did post in {}ms", id, wait_ms);
+                                                    return;
+                                                }
+                                            }
+    
+                                            post(240, format!("https://codegolf.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
+                                            
+                                            println!("watch_{}: posted question {}", id, question.id);
                                         }
-                                    },
-                                    _ => ()
-                                }
-                            }
-                            // PLDI
-                            "716-questions-newest" => {
-                                let question: Question = serde_json::from_str(&data.data).unwrap();
+                                    }
+                                    "202-questions-newest" => {
+                                        let question: Question = serde_json::from_str(&data.data).unwrap();
+        
+                                        println!("watch_{}: 202-questions-newest: {}", id, question.id);
+        
+                                        if ids.lock().await.p_202.insert(question.id.clone()) {
+                                            let rep = wait_for_api(&question.id, false, "codegolf.meta", Arc::clone(&user_main), Arc::clone(&config)).await;
+                                            
+                                            if rep < 10 {
+                                                println!("watch_{}: question {}: User rep is {} (<10), delaying...", id, question.id, rep);
+    
+                                                tokio::time::sleep(Duration::from_millis(5 * 60 * 1000)).await;
+    
+                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=codegolf.meta&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
+    
+                                                if response.items.is_empty() {
+                                                    println!("watch_{}: question {}: seems to be deleted now", id, question.id);
 
-                                println!("watch_{}: 716-questions-newest: {}", id, question.id);
-                                
-                                if ids.lock().await.p_716.insert(question.id.clone()) {
-                                    let wait_ms = wait_for_api(&question.id, false, "languagedesign", Arc::clone(&user_main), Arc::clone(&config)).await;
-                                    
-                                    post(146046, format!("https://languagedesign.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
-                                    
-                                    println!("watch_{}: did post in {}ms", id, wait_ms);
-                                }
-                            }
-                            "717-questions-newest" => {
-                                let question: Question = serde_json::from_str(&data.data).unwrap();
+                                                    return;
+                                                }
+                                            }
+                                            
+                                            post(240, format!("https://codegolf.meta.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
+                                            
+                                            println!("watch_{}: posted question {}", id, question.id);
+                                        }
+                                    }
+                                    "202-question-2140" => {
+                                        let update: Update = serde_json::from_str(&data.data).unwrap();
+        
+                                        match update.a.as_str() {
+                                            "answer-add" => {
+                                                let answer: AnswerAdd = serde_json::from_str(&data.data).unwrap();
+        
+                                                println!("watch_{}: 202-question-2104 answer-add: {}", id, answer.answerid);
+        
+                                                if ids.lock().await.p_202.insert(answer.answerid.to_string()) {
+                                                    let _rep = wait_for_api(&answer.answerid.to_string(), true, "codegolf.meta", Arc::clone(&user_sandbox), Arc::clone(&config)).await;
+                                                    
+                                                    post(240, format!("https://codegolf.meta.stackexchange.com/a/{}", answer.answerid), Arc::clone(&user_sandbox)).await;
+        
+                                                    println!("watch_{}: posted answer {}", id, answer.answerid);
+                                                }
+                                            },
+                                            _ => ()
+                                        }
+                                    }
+                                    // PLDI
+                                    "716-questions-newest" => {
+                                        let question: Question = serde_json::from_str(&data.data).unwrap();
+        
+                                        println!("watch_{}: 716-questions-newest: {}", id, question.id);
+                                        
+                                        if ids.lock().await.p_716.insert(question.id.clone()) {
+                                            let rep = wait_for_api(&question.id, false, "languagedesign", Arc::clone(&user_main), Arc::clone(&config)).await;
+                                            
+                                            if rep < 10 {
+                                                println!("watch_{}: question {}: User rep is {} (<10), delaying...", id, question.id, rep);
+    
+                                                tokio::time::sleep(Duration::from_millis(5 * 60 * 1000)).await;
+    
+                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=languagedesign&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
+    
+                                                if response.items.is_empty() {
+                                                    println!("watch_{}: question {}: seems to be deleted now", id, question.id);
 
-                                println!("watch_{}: 717-questions-newest: {}", id, question.id);
+                                                    return;
+                                                }
+                                            }
+                                            
+                                            post(146046, format!("https://languagedesign.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
+                                            
+                                            println!("watch_{}: posted question {}", id, question.id);
+                                        }
+                                    }
+                                    "717-questions-newest" => {
+                                        let question: Question = serde_json::from_str(&data.data).unwrap();
+        
+                                        println!("watch_{}: 717-questions-newest: {}", id, question.id);
+        
+                                        if ids.lock().await.p_717.insert(question.id.clone()) {
+                                            let rep = wait_for_api(&question.id, false, "languagedesign.meta", Arc::clone(&user_main), Arc::clone(&config)).await;
+                                            
+                                            if rep < 10 {
+                                                println!("watch_{}: question {}: User rep is {} (<10), delaying...", id, question.id, rep);
+    
+                                                tokio::time::sleep(Duration::from_millis(5 * 60 * 1000)).await;
+    
+                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=languagedesign.meta&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
+    
+                                                if response.items.is_empty() {
+                                                    println!("watch_{}: question {}: seems to be deleted now", id, question.id);
 
-                                if ids.lock().await.p_717.insert(question.id.clone()) {
-                                    let wait_ms = wait_for_api(&question.id, false, "languagedesign.meta", Arc::clone(&user_main), Arc::clone(&config)).await;
-                                    
-                                    post(146046, format!("https://languagedesign.meta.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
-                                    
-                                    println!("watch_{}: did post in {}ms", id, wait_ms);
+                                                    return;
+                                                }
+                                            }
+                                            
+                                            post(146046, format!("https://languagedesign.meta.stackexchange.com/q/{}", question.id), Arc::clone(&user_main)).await;
+                                            
+                                            println!("watch_{}: posted question {}", id, question.id);
+                                        }
+                                    }
+                                    _ => panic!("Unknown data.action: {}", data.action)
                                 }
-                            }
-                            _ => panic!("Unknown data.action: {}", data.action)
+                            });
                         }
                     }
                 }
@@ -222,28 +334,6 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
     );
     
     Ok(())
-}
-
-#[derive(Deserialize)]
-struct APIQuestions {
-    items: Vec<APIQuestion>
-}
-
-#[derive(Deserialize)]
-struct APIQuestion {
-    creation_date: u128,
-    question_id: u64
-}
-
-#[derive(Deserialize)]
-struct APIAnswers {
-    items: Vec<APIAnswer>
-}
-
-#[derive(Deserialize)]
-struct APIAnswer {
-    creation_date: u128,
-    answer_id: u64
 }
 
 async fn post_from_api(down_since: u128, ids: Arc<Mutex<Ids>>, user_main: Arc<User>, user_sandbox: Arc<User>, config: Arc<Config>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
