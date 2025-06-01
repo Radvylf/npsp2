@@ -77,7 +77,7 @@ async fn wait_for_api(id: &str, is_answer: bool, site: &str, user: Arc<User>, co
     let start = time();
     
     async fn is_on_api(id: &str, is_answer: bool, site: &str, user: Arc<User>, config: Arc<Config>) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        let response_text = user.client.get(format!("https://api.stackexchange.com/2.3/{}/{}?site={}&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", if is_answer { "answers" } else { "questions" }, id, site, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap();
+        let response_text = user.client.get(format!("https://api.stackexchange.com/2.3/{}/{}?site={}&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", if is_answer { "answers" } else { "questions" }, id, site, config.get_api_key())).send().await.unwrap().error_for_status().unwrap().text().await.unwrap();
 
         if !is_answer {
             let response: APIQuestions = serde_json::from_str(&response_text).unwrap();
@@ -193,7 +193,7 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
     
                                                 tokio::time::sleep(Duration::from_millis(5 * 60 * 1000)).await;
     
-                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=codegolf&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
+                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=codegolf&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.get_api_key())).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
     
                                                 if response.items.is_empty() {
                                                     println!("watch_{}: question {}: seems to be deleted now", id, question.id);
@@ -220,7 +220,7 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
     
                                                 tokio::time::sleep(Duration::from_millis(5 * 60 * 1000)).await;
     
-                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=codegolf.meta&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
+                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=codegolf.meta&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.get_api_key())).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
     
                                                 if response.items.is_empty() {
                                                     println!("watch_{}: question {}: seems to be deleted now", id, question.id);
@@ -268,7 +268,7 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
     
                                                 tokio::time::sleep(Duration::from_millis(5 * 60 * 1000)).await;
     
-                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=languagedesign&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
+                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=languagedesign&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.get_api_key())).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
     
                                                 if response.items.is_empty() {
                                                     println!("watch_{}: question {}: seems to be deleted now", id, question.id);
@@ -295,7 +295,7 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
     
                                                 tokio::time::sleep(Duration::from_millis(5 * 60 * 1000)).await;
     
-                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=languagedesign.meta&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.key)).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
+                                                let response: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions/{}?site=languagedesign.meta&key={}&filter=!)Q.zNIhl_-qxryCqQj5aX(Sp", question.id, config.get_api_key())).send().await.unwrap().error_for_status().unwrap().text().await.unwrap())).unwrap();
     
                                                 if response.items.is_empty() {
                                                     println!("watch_{}: question {}: seems to be deleted now", id, question.id);
@@ -337,12 +337,12 @@ async fn connect_watch_ws(id: usize, ids: Arc<Mutex<Ids>>, user_main: Arc<User>,
 }
 
 async fn post_from_api(down_since: u128, ids: Arc<Mutex<Ids>>, user_main: Arc<User>, user_sandbox: Arc<User>, config: Arc<Config>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let qs_200: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=codegolf&filter=!bBWABX77YE7)Qj&key={}", config.key)).send().await?.error_for_status()?.text().await?))?;
-    let qs_202: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=codegolf.meta&filter=!bBWABX77YE7)Qj&key={}", config.key)).send().await?.error_for_status()?.text().await?))?;
-    let as_sandbox: APIAnswers = serde_json::from_str(&(user_sandbox.client.get(format!("https://api.stackexchange.com/2.3/questions/2140/answers?pagesize=12&order=desc&sort=creation&site=codegolf.meta&filter=!-)QWsc3sXhrz&key={}", config.key)).send().await?.error_for_status()?.text().await?))?;
+    let qs_200: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=codegolf&filter=!bBWABX77YE7)Qj&key={}", config.get_api_key())).send().await?.error_for_status()?.text().await?))?;
+    let qs_202: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=codegolf.meta&filter=!bBWABX77YE7)Qj&key={}", config.get_api_key())).send().await?.error_for_status()?.text().await?))?;
+    let as_sandbox: APIAnswers = serde_json::from_str(&(user_sandbox.client.get(format!("https://api.stackexchange.com/2.3/questions/2140/answers?pagesize=12&order=desc&sort=creation&site=codegolf.meta&filter=!-)QWsc3sXhrz&key={}", config.get_api_key())).send().await?.error_for_status()?.text().await?))?;
     // PLDI
-    let qs_716: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=languagedesign&filter=!bBWABX77YE7)Qj&key={}", config.key)).send().await?.error_for_status()?.text().await?))?;
-    let qs_717: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=languagedesign.meta&filter=!bBWABX77YE7)Qj&key={}", config.key)).send().await?.error_for_status()?.text().await?))?;
+    let qs_716: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=languagedesign&filter=!bBWABX77YE7)Qj&key={}", config.get_api_key())).send().await?.error_for_status()?.text().await?))?;
+    let qs_717: APIQuestions = serde_json::from_str(&(user_main.client.get(format!("https://api.stackexchange.com/2.3/questions?pagesize=12&order=desc&sort=creation&site=languagedesign.meta&filter=!bBWABX77YE7)Qj&key={}", config.get_api_key())).send().await?.error_for_status()?.text().await?))?;
     
     for q in qs_200.items {
         if q.creation_date * 1000 > down_since - 20000 {

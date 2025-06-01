@@ -251,8 +251,8 @@ pub async fn login(config: Arc<Config>) -> Result<(User, User), Box<dyn std::err
         
         println!("login: found from {} mins ago", (time() - credentials.time) / 60000);
     } else {
-        let login_main = try_login(&client_main, &config.np.email, &config.np.password).await?;
-        let login_sandbox = try_login(&client_sandbox, &config.sp.email, &config.sp.password).await?;
+        let login_main = try_login(&client_main, &config.get_users().get("np").unwrap().email, &config.get_users().get("np").unwrap().password).await?;
+        let login_sandbox = try_login(&client_sandbox, &config.get_users().get("sp").unwrap().email, &config.get_users().get("sp").unwrap().password).await?;
         
         fkeys = (login_main.fkey.clone(), login_sandbox.fkey.clone());
         
