@@ -45,7 +45,10 @@ pub struct Ids {
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config: Arc<Config> = Arc::new(serde_json::from_str::<UnlinkedConfig>(&std::fs::read_to_string("config.json")?)?.link()?);
     
-    let (user_main, user_sandbox) = login::login(config.clone()).await?;
+    let (user_main, user_sandbox) = (
+        login::log_in("np", config.get_users().get("np").unwrap()).await?,
+        login::log_in("sp", config.get_users().get("sp").unwrap()).await?,
+    );
     
     let main_arc = Arc::new(user_main);
     let sandbox_arc = Arc::new(user_sandbox);

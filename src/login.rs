@@ -3,7 +3,10 @@ use std::sync::Arc;
 use html_parser::{Dom, Node};
 use serde::{Serialize, Deserialize};
 
-use crate::{time, Config};
+use crate::config::UserConfig;
+use crate::time;
+
+type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 #[derive(Debug)]
 struct MissingFkey {}
@@ -40,7 +43,7 @@ impl fmt::Display for MissingUserId {
     }
 }
 
-fn extract_fkey(html: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+fn extract_fkey(html: &str) -> Result<String> {
     fn search_node(node: &Node) -> Option<String> {
         match node {
             Node::Element(element) => {
@@ -75,7 +78,7 @@ fn extract_fkey(html: &str) -> Result<String, Box<dyn std::error::Error + Send +
     Err(Box::new(MissingFkey {}))
 }
 
-fn contains_logout(html: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+fn contains_logout(html: &str) -> Result<bool> {
     fn search_node(node: &Node) -> bool {
         match node {
             Node::Element(element) => {
@@ -94,7 +97,7 @@ fn contains_logout(html: &str) -> Result<bool, Box<dyn std::error::Error + Send 
     Ok(dom.children.iter().any(search_node))
 }
 
-fn extract_user_id(html: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+fn extract_user_id(html: &str) -> Result<String> {
     fn search_node(node: &Node) -> Option<String> {
         match node {
             Node::Element(element) => {
@@ -129,7 +132,7 @@ fn extract_user_id(html: &str) -> Result<String, Box<dyn std::error::Error + Sen
     Err(Box::new(MissingUserId {})) // research
 }
 
-async fn try_login(client: &reqwest::Client, email: &str, password: &str) -> Result<UserCredentials, Box<dyn std::error::Error + Send + Sync>> {
+async fn try_login(client: &reqwest::Client, email: &str, password: &str) -> Result<Credentials> {
     let fkey = extract_fkey(&client.get("https://codegolf.stackexchange.com/users/login").send().await?.error_for_status()?.text().await?)?;
     
     let is_login_ok = client.post("https://codegolf.stackexchange.com/users/login-or-signup/validation/track").form(&[
@@ -175,7 +178,8 @@ async fn try_login(client: &reqwest::Client, email: &str, password: &str) -> Res
     let user_id = extract_user_id(&user)?;
     let logged_in_fkey = extract_fkey(&user)?;
     
-    Ok(UserCredentials {
+    Ok(Credentials {
+        time: time(),
         user_id: user_id,
         fkey: logged_in_fkey
     })
@@ -184,12 +188,6 @@ async fn try_login(client: &reqwest::Client, email: &str, password: &str) -> Res
 #[derive(Serialize, Deserialize)]
 struct Credentials {
     time: u128,
-    main: UserCredentials,
-    sandbox: UserCredentials
-}
-
-#[derive(Serialize, Deserialize)]
-struct UserCredentials {
     user_id: String,
     fkey: String
 }
@@ -205,8 +203,8 @@ impl fmt::Display for OutdatedCredentials {
     }
 }
 
-async fn retrieve_credentials() -> Result<Credentials, Box<dyn std::error::Error + Send + Sync>> {
-    let json = tokio::fs::read_to_string("tmp/credentials.json").await?;
+async fn retrieve_credentials(user_id: &str) -> Result<Credentials> {
+    let json = tokio::fs::read_to_string(format!("tmp/{}-credentials.json", user_id)).await?;
     
     let credentials: Credentials = serde_json::from_str(&json)?;
     
@@ -224,59 +222,38 @@ pub struct User {
     pub fkey: String
 }
 
-pub async fn login(config: Arc<Config>) -> Result<(User, User), Box<dyn std::error::Error + Send + Sync>> {
-    let credentials = retrieve_credentials().await.ok();
-    
-    let cookie_stores;
-    
-    if credentials.is_some() {
-        cookie_stores = (
-            Arc::new(reqwest_cookie_store::CookieStoreMutex::new(reqwest_cookie_store::CookieStore::load_json(std::io::BufReader::new(std::fs::File::open("tmp/cookies-main.json")?))?)),
-            Arc::new(reqwest_cookie_store::CookieStoreMutex::new(reqwest_cookie_store::CookieStore::load_json(std::io::BufReader::new(std::fs::File::open("tmp/cookies-sandbox.json")?))?))
-        );
+pub async fn log_in(user_id: &str, user_config: &UserConfig) -> Result<User> {
+    let credentials = retrieve_credentials(user_id).await.ok();
+
+    let cookie_store = if credentials.is_some() {
+        Arc::new(reqwest_cookie_store::CookieStoreMutex::new(reqwest_cookie_store::CookieStore::load_json(std::io::BufReader::new(std::fs::File::open(format!("tmp/{}-cookies.json", user_id))?))?))
     } else {
-        cookie_stores = (
-            Arc::new(reqwest_cookie_store::CookieStoreMutex::new(reqwest_cookie_store::CookieStore::default())),
-            Arc::new(reqwest_cookie_store::CookieStoreMutex::new(reqwest_cookie_store::CookieStore::default()))
-        );
-    }
-    
-    let client_main = reqwest::ClientBuilder::new().user_agent("Mozilla/5.0 (compatible; NPSP/2.0; +https://chat.stackexchange.com/rooms/240/the-nineteenth-byte)").cookie_store(true).cookie_provider(Arc::clone(&cookie_stores.0)).gzip(true).build()?;
-    let client_sandbox = reqwest::ClientBuilder::new().user_agent("Mozilla/5.0 (compatible; NPSP/2.0; +https://chat.stackexchange.com/rooms/240/the-nineteenth-byte)").cookie_store(true).cookie_provider(Arc::clone(&cookie_stores.1)).gzip(true).build()?;
-    
-    let fkeys;
-    
+        Arc::new(reqwest_cookie_store::CookieStoreMutex::new(reqwest_cookie_store::CookieStore::default()))
+    };
+
+    let client = reqwest::ClientBuilder::new().user_agent("Mozilla/5.0 (compatible; NPSP/2.0; +https://chat.stackexchange.com/rooms/240/the-nineteenth-byte)").cookie_store(true).cookie_provider(Arc::clone(&cookie_store)).gzip(true).build()?;
+
+    let fkey;
+
     if let Some(credentials) = credentials {
-        fkeys = (credentials.main.fkey, credentials.sandbox.fkey);
+        fkey = credentials.fkey;
         
         println!("login: found from {} mins ago", (time() - credentials.time) / 60000);
     } else {
-        let login_main = try_login(&client_main, &config.get_users().get("np").unwrap().email, &config.get_users().get("np").unwrap().password).await?;
-        let login_sandbox = try_login(&client_sandbox, &config.get_users().get("sp").unwrap().email, &config.get_users().get("sp").unwrap().password).await?;
-        
-        fkeys = (login_main.fkey.clone(), login_sandbox.fkey.clone());
+        let login = try_login(&client, &user_config.email, &user_config.password).await?;
         
         tokio::fs::create_dir_all("tmp").await?;
-        tokio::fs::write("tmp/credentials.json", serde_json::to_string(&Credentials {
-            time: time(),
-            main: login_main,
-            sandbox: login_sandbox
-        })?).await?;
+        tokio::fs::write(format!("tmp/{}-credentials.json", user_id), serde_json::to_string(&login)?).await?;
         
-        cookie_stores.0.lock().unwrap().save_json(&mut std::io::BufWriter::new(std::fs::File::create("tmp/cookies-main.json")?))?;
-        cookie_stores.1.lock().unwrap().save_json(&mut std::io::BufWriter::new(std::fs::File::create("tmp/cookies-sandbox.json")?))?;
+        fkey = login.fkey;
+        
+        cookie_store.lock().unwrap().save_json(&mut std::io::BufWriter::new(std::fs::File::create(format!("tmp/{}-cookies.json", user_id))?))?;
         
         println!("login: successful");
     }
     
-    Ok((
-        User {
-            client: client_main,
-            fkey: fkeys.0
-        },
-        User {
-            client: client_sandbox,
-            fkey: fkeys.1
-        }
-    ))
+    Ok(User {
+        client: client,
+        fkey: fkey
+    })
 }
