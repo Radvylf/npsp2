@@ -10,6 +10,8 @@ use tokio::sync::Mutex;
 use std::collections::HashSet;
 use std::time::SystemTime;
 
+const TMP_FILE_REVISION: &'static str = "0";
+
 pub fn time() -> u128 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis()
 }

@@ -4,7 +4,7 @@ use html_parser::{Dom, Node};
 use serde::{Serialize, Deserialize};
 
 use crate::config::UserConfig;
-use crate::time;
+use crate::{time, TMP_FILE_REVISION};
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -179,6 +179,7 @@ async fn try_login(client: &reqwest::Client, email: &str, password: &str) -> Res
     let logged_in_fkey = extract_fkey(&user)?;
     
     Ok(Credentials {
+        revision: TMP_FILE_REVISION.to_string(),
         time: time(),
         user_id: user_id,
         fkey: logged_in_fkey
@@ -187,6 +188,7 @@ async fn try_login(client: &reqwest::Client, email: &str, password: &str) -> Res
 
 #[derive(Serialize, Deserialize)]
 struct Credentials {
+    revision: String,
     time: u128,
     user_id: String,
     fkey: String
@@ -199,7 +201,18 @@ impl Error for OutdatedCredentials {}
 
 impl fmt::Display for OutdatedCredentials {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Outdated credentials")
+        write!(f, "outdated credentials")
+    }
+}
+
+#[derive(Debug)]
+struct WrongCredentialsRevision {}
+
+impl Error for WrongCredentialsRevision {}
+
+impl fmt::Display for WrongCredentialsRevision {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "wrong credentials revision")
     }
 }
 
@@ -212,6 +225,10 @@ async fn retrieve_credentials(user_id: &str) -> Result<Credentials> {
     
     if time < credentials.time || time - credentials.time > 7200000 {
         return Err(Box::new(OutdatedCredentials {}));
+    }
+
+    if credentials.revision != TMP_FILE_REVISION {
+        return Err(Box::new(WrongCredentialsRevision {}));
     }
     
     return Ok(credentials);
